@@ -34,7 +34,7 @@ conda activate vae_denoise
 
 # Required dependencies
 pip install torch torchvision torchaudio
-pip install torchmetrics tensorboard soundfile einops librosa scipy
+pip install torchmetrics tensorboard soundfile einops librosa scipy pystoi
 
 # If using wandb
 pip install wandb

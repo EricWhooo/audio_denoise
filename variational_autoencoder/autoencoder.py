@@ -1,9 +1,9 @@
 import torch
 from torch import nn
-from denoise.variational_autoencoder.modules import Encoder, Decoder
-from denoise.variational_autoencoder.distributions import DiagonalGaussianDistribution
+from variational_autoencoder.modules import Encoder, Decoder
+from variational_autoencoder.distributions import DiagonalGaussianDistribution
 
-from denoise.hifigan.utilities import get_vocoder, vocoder_infer
+from hifigan.utilities import get_vocoder, vocoder_infer
 
 
 class AutoencoderKL(nn.Module):

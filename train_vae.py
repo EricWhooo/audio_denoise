@@ -5,8 +5,8 @@ Training script for AutoencoderKL (VAE) speech denoiser with optional Weights & 
 logging or stdout progress bar.
 
 Usage example:
-  python -m denoise.training.train_vae \
-      --root /data/VoiceBank-DEMAND \
+  python train_vae.py \
+      --root /vast/lb4434/datasets/voicebank-demand \
       --epochs 50 \
       --exp vae_run1 \
       --use_wandb
@@ -30,11 +30,12 @@ from torchmetrics.audio import (
 from tqdm import tqdm
 
 # ---------- project imports ----------
-from denoise.training.dataset import create_dataloaders
-from denoise.variational_autoencoder.autoencoder import AutoencoderKL
-from denoise.audio.stft import TacotronSTFT
+from training.dataset import create_dataloaders
+from variational_autoencoder.autoencoder import AutoencoderKL
+from audio.stft import TacotronSTFT
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"using device: {DEVICE}")
 
 
 def build_stft() -> TacotronSTFT:
