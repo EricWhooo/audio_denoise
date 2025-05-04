@@ -33,8 +33,11 @@ conda create -n vae_denoise python=3.9 -y
 conda activate vae_denoise
 
 # Required dependencies
-pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116
+pip install torch torchvision torchaudio
 pip install torchmetrics tensorboard soundfile einops librosa scipy
+
+# If using wandb
+pip install wandb
 ```
 
 ---
@@ -46,9 +49,11 @@ Download the **VoiceBank-DEMAND** dataset.
 After extraction, ensure the directory structure:
 
 ```text
-VoiceBank-DEMAND/
- ├─ clean_trainset_wav/
- ├─ noisy_trainset_wav/
+voicebank-demand/
+ ├─ clean_trainset_56spk_wav/
+ ├─ noisy_trainset_56spk_wav/
+ ├─ clean_trainset_28spk_wav/
+ ├─ noisy_trainset_28spk_wav/
  ├─ clean_testset_wav/
  └─ noisy_testset_wav/
 ```
@@ -62,16 +67,12 @@ python -m denoise.training.train_vae \
   --root /path/to/VoiceBank-DEMAND \
   --epochs 50 \
   --batch_size 8 \
-  --exp my_experiment
+  --exp exp_wandb \
+  --use_wandb       #optional
 ```
 
-Logs and best models are saved in `runs/my_experiment/`.
+Logs and best models are saved in `runs/<exp>/`.
 
-Monitor training in real time with TensorBoard:
-
-```bash
-tensorboard --logdir runs
-```
 
 ### Metrics:
 
@@ -99,7 +100,20 @@ This script will:
 
 ---
 
-## 5. FAQ
+## 5. Dataset
+
+To download:
+```bash
+wget -O voicebank-demand.zip https://datashare.ed.ac.uk/download/DS_10283_2791.zip
+```
+To unzip:
+```bash
+unzip voicebank-demand.zip -d voicebank-demand
+```
+
+---
+
+## 6. FAQ
 
 | Issue                  | Solution                                                                 |
 |------------------------|-------------------------------------------------------------------------|
