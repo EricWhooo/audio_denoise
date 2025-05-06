@@ -4,7 +4,7 @@ import json
 import torch
 import numpy as np
 
-import denoise.hifigan as hifigan
+import hifigan as hifigan
 
 HIFIGAN_16K_64 = {
     "resblock": "1",

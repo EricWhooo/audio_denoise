@@ -5,8 +5,8 @@ import torch.nn as nn
 import numpy as np
 from einops import rearrange
 
-from audioldm.utils import instantiate_from_config
-from audioldm.latent_diffusion.attention import LinearAttention
+from utils.utils import instantiate_from_config
+from latent_diffusion.attention import LinearAttention
 
 
 def get_timestep_embedding(timesteps, embedding_dim):
