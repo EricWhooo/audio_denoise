@@ -72,9 +72,9 @@ class AutoencoderKL(nn.Module):
         else:
             z = posterior.mode()
 
-        if self.flag_first_run:
+        '''if self.flag_first_run:
             print("Latent size: ", z.size())
-            self.flag_first_run = False
+            self.flag_first_run = False'''
 
         dec = self.decode(z)
 

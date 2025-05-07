@@ -7,8 +7,9 @@ logging or stdout progress bar.
 Usage example:
   python train_vae.py \
       --root /vast/lb4434/datasets/voicebank-demand \
-      --epochs 50 \
+      --epochs 5 \
       --exp vae_run1 \
+      --subset 28spk \
       --use_wandb
 """
 
@@ -106,7 +107,7 @@ def main(cfg: argparse.Namespace):
     stft_fn = build_stft()
     mel_params = dict(target_length=1024, fn_STFT=stft_fn)
     train_loader, val_loader, test_loader = create_dataloaders(
-        cfg.root, mel_params, cfg.batch_size
+        root_dir=cfg.root, mel_params=mel_params, batch_size=cfg.batch_size, subset_type=cfg.subset
     )
 
     # 模型
@@ -193,7 +194,7 @@ def validate(model, loader):
         noisy_mel, clean_mel = noisy_mel.to(DEVICE), clean_mel.to(DEVICE)
         rec_mel, posterior = model(noisy_mel, sample_posterior=False)
         recon = F.l1_loss(rec_mel, clean_mel, reduction="sum")
-        kl = torch.sum(posterior.kl())
+        kl = torch.mean(posterior.kl())
         total += (recon + kl).item()
     return total / len(loader.dataset)
 
@@ -227,6 +228,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--log_step", type=int, default=50)
     parser.add_argument("--exp", type=str, default="vae_denoise")
+    parser.add_argument("--subset", type=str, default="28spk")
     parser.add_argument(
         "--use_wandb",
         action="store_true",

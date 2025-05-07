@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
 Usage:
-    python -m denoise.training.inference \
-        --ckpt runs/vae_denoise/best.ckpt \
-        --noisy noisy.wav \
-        --out denoised.wav
+    python inference.py \
+        --ckpt runs/vae_run2_56/best.ckpt \
+        --noisy /vast/lb4434/datasets/voicebank-demand/noisy_testset_wav/p232_014.wav \
+        --out p232_014_c.wav
 """
 import argparse
 import soundfile as sf
 import torch
 
-from denoise.variational_autoencoder.autoencoder import AutoencoderKL
-from denoise.audio.stft import TacotronSTFT
-from denoise.audio.tools import wav_to_fbank
+from variational_autoencoder.autoencoder import AutoencoderKL
+from audio.stft import TacotronSTFT
+from audio.tools import wav_to_fbank
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -63,7 +63,10 @@ def main(args):
     denoised_wav = model.decode_to_waveform(rec_mel).squeeze() / 32768.0  # [-1,1]
 
     # ---- save --------------------------------------------------------
-    sf.write(args.out, denoised_wav.cpu().numpy(), samplerate=16000)
+    if DEVICE == 'cuda':
+        sf.write(args.out, denoised_wav.cpu().numpy(), samplerate=16000)
+    else:
+        sf.write(args.out, denoised_wav, samplerate=16000)
     print(f"✓ Denoised audio saved to {args.out}")
 
 
