@@ -136,5 +136,5 @@ def create_dataloaders(
         if val_set is not None
         else None
     )
-    test_loader = _make_loader(test_set, batch_size, False, num_workers, pin_memory)
+    test_loader = _make_loader(test_set, 1, False, num_workers, pin_memory)
     return train_loader, val_loader, test_loader

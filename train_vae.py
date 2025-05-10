@@ -10,6 +10,7 @@ Usage example:
       --epochs 5 \
       --exp vae_run1 \
       --subset 28spk \
+      --beta 1\
       --save_dir ./samples \
       --use_wandb
 """
@@ -34,7 +35,6 @@ from torchmetrics.audio import (
 from tqdm import tqdm
 import soundfile as sf
 
-# ---------- 可能缺失时再导入（懒加载避免安装缺少包即报错） ----------
 from speechmetrics import load as _load_speechmetrics
 
 speechmetrics_fn = _load_speechmetrics(["csig", "cbak", "covl"], window="full")
@@ -119,7 +119,7 @@ def main(cfg: argparse.Namespace):
 
     # 数据
     stft_fn = build_stft()
-    mel_params = dict(target_length=350, fn_STFT=stft_fn) #1024 -> 10 sec
+    mel_params = dict(target_length=512, fn_STFT=stft_fn) #1024 -> 10 sec
     train_loader, val_loader, test_loader = create_dataloaders(
         root_dir=cfg.root, mel_params=mel_params, batch_size=cfg.batch_size, subset_type=cfg.subset
     )
@@ -157,7 +157,7 @@ def main(cfg: argparse.Namespace):
 
             recon_loss = F.l1_loss(rec_mel, clean_mel)
             kl_loss = torch.mean(posterior.kl())
-            beta = beta_anneal(global_step, total_steps)
+            beta = beta_anneal(global_step, total_steps,beta_max=cfg.beta)
             loss = recon_loss + beta * kl_loss
 
             optimizer.zero_grad()
@@ -313,6 +313,7 @@ if __name__ == "__main__":
     parser.add_argument("--log_step", type=int, default=50)
     parser.add_argument("--exp", type=str, default="vae_denoise")
     parser.add_argument("--subset", type=str, default="28spk")
+    parser.add_argument("--beta", type=float, default=1e-3)
     parser.add_argument(
         "--use_wandb",
         action="store_true",
