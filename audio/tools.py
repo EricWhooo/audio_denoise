@@ -50,17 +50,19 @@ def normalize_wav(waveform):
 
 
 def read_wav_file(filename, segment_length):
-    # waveform, sr = librosa.load(filename, sr=None, mono=True) # 4 times slower
-    waveform, sr = torchaudio.load(filename)  # Faster!!!
-    waveform = torchaudio.functional.resample(waveform, orig_freq=sr, new_freq=16000)
-    waveform = waveform.numpy()[0, ...]
-    waveform = normalize_wav(waveform)
-    waveform = waveform[None, ...]
+    """
+    统一重采样到 22 050 Hz，以配合 TacotronSTFT 与 DiffWave。
+    """
+    waveform, sr = torchaudio.load(filename)
+    waveform = torchaudio.functional.resample(waveform,
+                                              orig_freq=sr,
+                                              new_freq=22050)        # ★ 改为 22k
+    waveform = waveform.numpy()[0]
+    waveform = normalize_wav(waveform)[None, ...]
+
     waveform = pad_wav(waveform, segment_length)
-    
     waveform = waveform / np.max(np.abs(waveform))
     waveform = 0.5 * waveform
-    
     return waveform
 
 
@@ -68,7 +70,8 @@ def wav_to_fbank(filename, target_length=1024, fn_STFT=None):
     assert fn_STFT is not None
 
     # mixup
-    waveform = read_wav_file(filename, target_length * 160)  # hop size is 160
+    segment_length = target_length * fn_STFT.hop_length      # = 256 * T
+    waveform = read_wav_file(filename, segment_length)
 
     waveform = waveform[0, ...]
     waveform = torch.FloatTensor(waveform)

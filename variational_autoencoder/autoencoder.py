@@ -3,9 +3,7 @@ from torch import nn
 from variational_autoencoder.modules import Encoder, Decoder
 from variational_autoencoder.distributions import DiagonalGaussianDistribution
 from vocoder.diffwave_vocoder import mel2wav_diffwave
-
-from hifigan.utilities import get_vocoder, vocoder_infer
-
+from audio.audio_processing import dynamic_range_decompression     # ★ 新增
 
 class AutoencoderKL(nn.Module):
     def __init__(
@@ -36,7 +34,6 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = torch.nn.Conv2d(2 * ddconfig["z_channels"], 2 * embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
-        #self.vocoder = get_vocoder(None, "cpu")
         self.embed_dim = embed_dim
 
         if monitor is not None:
@@ -47,8 +44,8 @@ class AutoencoderKL(nn.Module):
         self.reloaded = False
         self.mean, self.std = None, None
 
+    # ---------------- Encoder / Decoder ---------------- #
     def encode(self, x):
-        # x = self.time_shuffle_operation(x)
         x = self.freq_split_subband(x)
         h = self.encoder(x)
         moments = self.quant_conv(h)
@@ -61,34 +58,31 @@ class AutoencoderKL(nn.Module):
         dec = self.freq_merge_subband(dec)
         return dec
 
+    # ---------------- Waveform helper ------------------ #
+    @torch.no_grad()
     def decode_to_waveform(self, dec):
-        wav = mel2wav_diffwave(dec)      # (B,N) float32 ±1
-        return wav.cpu().numpy()*32767   # 与旧接口保持一致
+        """
+        dec: (B,1,80,T) — 模型输出，已做 ln 压缩
+        返回值: numpy int16, (B,N)
+        """
+        # ln → 线性 → log10
+        mel_lin  = dynamic_range_decompression(dec.squeeze(1))      # (B,T,80)
+        mel_log10 = torch.log10(mel_lin.clamp(min=1e-5)).unsqueeze(1)  # (B,1,80,T)
+        wav = mel2wav_diffwave(mel_log10)      # (B,N) float32 ±1
+        return (wav.cpu().numpy() * 32767).astype("int16")
 
+    # ---------------- Forward -------------------------- #
     def forward(self, input, sample_posterior=True):
         posterior = self.encode(input)
-        if sample_posterior:
-            z = posterior.sample()
-        else:
-            z = posterior.mode()
-
-        '''if self.flag_first_run:
-            print("Latent size: ", z.size())
-            self.flag_first_run = False'''
-
+        z = posterior.sample() if sample_posterior else posterior.mode()
         dec = self.decode(z)
-
         return dec, posterior
 
+    # ---------------- 频带拆分/合并 ---------------------- #
     def freq_split_subband(self, fbank):
         if self.subband == 1 or self.image_key != "stft":
             return fbank
-
         bs, ch, tstep, fbins = fbank.size()
-
-        assert fbank.size(-1) % self.subband == 0
-        assert ch == 1
-
         return (
             fbank.squeeze(1)
             .reshape(bs, tstep, self.subband, fbins // self.subband)
@@ -98,6 +92,5 @@ class AutoencoderKL(nn.Module):
     def freq_merge_subband(self, subband_fbank):
         if self.subband == 1 or self.image_key != "stft":
             return subband_fbank
-        assert subband_fbank.size(1) == self.subband  # Channel dimension
         bs, sub_ch, tstep, fbins = subband_fbank.size()
         return subband_fbank.permute(0, 2, 1, 3).reshape(bs, tstep, -1).unsqueeze(1)
