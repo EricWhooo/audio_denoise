@@ -58,15 +58,12 @@ def ddconfig() -> Dict:
 @torch.no_grad()
 def mel_to_waveform(mel: torch.Tensor) -> np.ndarray:
     """
-    mel: (B,1,80,T)  压缩后的 log-mel（与 VAE 输出一致）
+    mel: (B,1,80,T)  —— ln 压缩后的 log-mel（与 VAE 输出一致）
     返回  int16 numpy (B,N)
     """
-    # 解压缩：exp → 线性，再转成 dB (log10)；DiffWave 训练时用 log10(mel)
-    mel_lin = dynamic_range_decompression(mel.squeeze(1))     # (B,T,80)
-    mel_db  = torch.log10(mel_lin.clamp(min=1e-5)) * 20       # dB 标度
-    mel_db  = mel_db.unsqueeze(1)                             # (B,1,80,T)
-
-    wav = mel2wav_diffwave(mel_db)            # (B,N), float32 ±1
+    mel_lin   = dynamic_range_decompression(mel.squeeze(1))          # (B,T,80)
+    mel_log10 = torch.log10(mel_lin.clamp(min=1e-5)).unsqueeze(1)    # (B,1,80,T)
+    wav = mel2wav_diffwave(mel_log10)                                # (B,N) ±1
     return (wav.cpu().numpy() * 32767).astype(np.int16)
 
 # ---------- evaluate ------------------------------------------------
