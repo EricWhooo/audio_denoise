@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from variational_autoencoder.modules import Encoder, Decoder
 from variational_autoencoder.distributions import DiagonalGaussianDistribution
+from vocoder.diffwave_vocoder import mel2wav_diffwave
 
 from hifigan.utilities import get_vocoder, vocoder_infer
 
@@ -35,7 +36,7 @@ class AutoencoderKL(nn.Module):
         self.quant_conv = torch.nn.Conv2d(2 * ddconfig["z_channels"], 2 * embed_dim, 1)
         self.post_quant_conv = torch.nn.Conv2d(embed_dim, ddconfig["z_channels"], 1)
 
-        self.vocoder = get_vocoder(None, "cpu")
+        #self.vocoder = get_vocoder(None, "cpu")
         self.embed_dim = embed_dim
 
         if monitor is not None:
@@ -61,9 +62,8 @@ class AutoencoderKL(nn.Module):
         return dec
 
     def decode_to_waveform(self, dec):
-        dec = dec.squeeze(1).permute(0, 2, 1)
-        wav_reconstruction = vocoder_infer(dec, self.vocoder)
-        return wav_reconstruction
+        wav = mel2wav_diffwave(dec)      # (B,N) float32 ±1
+        return wav.cpu().numpy()*32767   # 与旧接口保持一致
 
     def forward(self, input, sample_posterior=True):
         posterior = self.encode(input)

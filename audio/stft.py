@@ -130,13 +130,13 @@ class STFT(torch.nn.Module):
 class TacotronSTFT(torch.nn.Module):
     def __init__(
         self,
-        filter_length,
-        hop_length,
-        win_length,
-        n_mel_channels,
-        sampling_rate,
-        mel_fmin,
-        mel_fmax,
+        filter_length = 1024,
+        hop_length = 256,
+        win_length = 1024,
+        n_mel_channels = 80,
+        sampling_rate = 22050,
+        mel_fmin = 0,
+        mel_fmax = 11025,
     ):
         super(TacotronSTFT, self).__init__()
         self.n_mel_channels = n_mel_channels

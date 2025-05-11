@@ -1,14 +1,13 @@
-# test.py  ── 用 Griffin-Lim 重建波形
+# test_noGAN.py —— 预训练 DiffWave (SpeechBrain) + pysepm 评测
 """
-Usage:
+示例：
   python test_noGAN.py \
       --root /vast/lb4434/datasets/voicebank-demand \
-      --exp vae_run4_56_beta1 \
-      --subset 56spk \
-      --save_dir ./samples/vae_run4_56_beta1
+      --exp vae_run80mel_t \
+      --subset 28spk \
+      --save_dir ./samples/vae_run80me_t
 """
 
-# test_noGAN.py  ── GPU Griffin-Lim + pysepm (CSIG/CBAK/COVL)
 from __future__ import annotations
 import argparse, random
 from pathlib import Path
@@ -23,8 +22,8 @@ from torchmetrics.audio import (
     PerceptualEvaluationSpeechQuality   as PESQ,
 )
 
-# ---------- pysepm  (CSIG / CBAK / COVL) ---------------------------
-from pysepm import composite as sepm_composite      # pip install pysepm
+from pysepm import composite as sepm_composite        # CSIG/CBAK/COVL
+from vocoder.diffwave_vocoder import mel2wav_diffwave # ← 新增封装
 
 # ---------- 项目内部 ----------------------------------------------
 from training.dataset                 import create_dataloaders
@@ -35,26 +34,18 @@ from audio.audio_processing           import dynamic_range_decompression
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print("using device:", DEVICE)
 
-# ---------- GPU Griffin-Lim ----------------------------------------
-def griffin_lim_gpu(mag: torch.Tensor, n_fft: int, hop: int, n_iters: int = 32):
-    B, F, T = mag.shape
-    win = torch.hann_window(n_fft, device=mag.device)
-    phase = torch.rand(B, F, T, device=mag.device) * 2 * np.pi
-    for _ in range(n_iters):
-        spec  = torch.polar(mag, phase)
-        wav   = torch.istft(spec, n_fft, hop, n_fft, win, center=True)
-        spec  = torch.stft (wav , n_fft, hop, n_fft, win,
-                            center=True, return_complex=True)
-        phase = spec.angle()
-    wav = torch.istft(torch.polar(mag, phase), n_fft, hop, n_fft, win, center=True)
-    wav = wav / wav.abs().amax(1, keepdim=True).clamp(min=1e-5)
-    return wav                                      # (B, N), float32
+# ---------- helper: resample to 16 kHz for PESQ --------------------
+import torchaudio
 
-# ---------- Tacotron STFT (CPU-side) -------------------------------
-def build_stft():
-    return TacotronSTFT(
-        filter_length=1024, hop_length=160, win_length=1024,
-        n_mel_channels=64, sampling_rate=16000, mel_fmin=0, mel_fmax=8000)
+def _to_16k(tensor_22k: torch.Tensor) -> torch.Tensor:
+    """tensor: (B, N) • float32 [-1,1]"""
+    return torchaudio.functional.resample(
+        tensor_22k, orig_freq=22050, new_freq=16000)
+
+# ---------- helper: 22 k → 16 k ----------
+def resample_22k_to_16k(wav_tensor: torch.Tensor) -> torch.Tensor:
+    # wav_tensor: (B, N_22k) float32 [-1, 1]
+    return torchaudio.functional.resample(wav_tensor, 22050, 16000)
 
 # ---------- VAE config --------------------------------------------
 def ddconfig() -> Dict:
@@ -63,24 +54,24 @@ def ddconfig() -> Dict:
         dropout=0.0, resamp_with_conv=True, in_channels=1, resolution=1024,
         z_channels=32)
 
-# ---------- log-mel → waveform ------------------------------------
+# ---------- log-mel → waveform (DiffWave) --------------------------
 @torch.no_grad()
-def mel_to_waveform(mel: torch.Tensor, stft_cpu: TacotronSTFT, n_iter=32):
-    stft_gpu = stft_cpu.to(DEVICE)
-    if not hasattr(stft_gpu, "_mel_inv"):
-        stft_gpu._mel_inv = torch.pinverse(stft_gpu.mel_basis).to(DEVICE)  # (513,64)
+def mel_to_waveform(mel: torch.Tensor) -> np.ndarray:
+    """
+    mel: (B,1,80,T)  压缩后的 log-mel（与 VAE 输出一致）
+    返回  int16 numpy (B,N)
+    """
+    # 解压缩：exp → 线性，再转成 dB (log10)；DiffWave 训练时用 log10(mel)
+    mel_lin = dynamic_range_decompression(mel.squeeze(1))     # (B,T,80)
+    mel_db  = torch.log10(mel_lin.clamp(min=1e-5)) * 20       # dB 标度
+    mel_db  = mel_db.unsqueeze(1)                             # (B,1,80,T)
 
-    n_fft, hop = stft_gpu.stft_fn.filter_length, stft_gpu.stft_fn.hop_length
-    mel = mel.squeeze(1).permute(0,2,1)                # (B,64,512)
-    mel_lin = dynamic_range_decompression(mel)
-    mag = (stft_gpu._mel_inv @ mel_lin).clamp_min(1e-5)  # (B,513,512)
-
-    wav = griffin_lim_gpu(mag, n_fft, hop, n_iters=n_iter)
-    return (wav.cpu().numpy() * 32767).astype(np.int16)   # (B,N) int16
+    wav = mel2wav_diffwave(mel_db)            # (B,N), float32 ±1
+    return (wav.cpu().numpy() * 32767).astype(np.int16)
 
 # ---------- evaluate ------------------------------------------------
 @torch.no_grad()
-def evaluate(model, loader, stft_cpu,
+def evaluate(model, loader,
              sisdr_m, stoi_m, pesq_m,
              save_dir: Optional[Path], n_examples=3):
 
@@ -93,30 +84,28 @@ def evaluate(model, loader, stft_cpu,
         noisy_mel, clean_mel = noisy_mel.to(DEVICE), clean_mel.to(DEVICE)
         den_mel, _ = model(noisy_mel, sample_posterior=False)
 
-        den_wav   = mel_to_waveform(den_mel,   stft_cpu)/32768.0
-        clean_wav = mel_to_waveform(clean_mel, stft_cpu)/32768.0
-        noisy_wav = mel_to_waveform(noisy_mel, stft_cpu)/32768.0
+        den_wav   = mel_to_waveform(den_mel)/32768.0
+        clean_wav = mel_to_waveform(clean_mel)/32768.0
+        noisy_wav = mel_to_waveform(noisy_mel)/32768.0
 
         den_t, clean_t = map(lambda x: torch.from_numpy(x).to(DEVICE),
                              (den_wav, clean_wav))
+        den_16k   = resample_22k_to_16k(den_t)
+        clean_16k = resample_22k_to_16k(clean_t)
         sums["sisdr"] += sisdr_m(den_t, clean_t).cpu()
         sums["stoi"]  += stoi_m (den_t, clean_t).cpu()
-        sums["pesq"]  += pesq_m (den_t, clean_t).cpu()
+        sums["pesq"] += pesq_m(den_16k, clean_16k).cpu()
 
-        # pysepm composite 返回 csig, cbak, covl, segSNR
         csig, cbak, covl = sepm_composite(
-            clean_wav[0].astype(np.float32),
-            den_wav  [0].astype(np.float32),
+            clean_16k[0].cpu().numpy().astype("float32"),
+            den_16k  [0].cpu().numpy().astype("float32"),
             fs=16000)
-
-        sums["csig"] += csig
-        sums["cbak"] += cbak
-        sums["covl"] += covl
+        sums["csig"] += csig; sums["cbak"] += cbak; sums["covl"] += covl
 
         if save_dir and idx in save_ids:
-            sf.write(save_dir/f"sample{idx}_noisy.wav",   noisy_wav[0],16000)
-            sf.write(save_dir/f"sample{idx}_denoised.wav",den_wav [0],16000)
-            sf.write(save_dir/f"sample{idx}_clean.wav",   clean_wav[0],16000)
+            sf.write(save_dir/f"sample{idx}_noisy.wav",   noisy_wav[0],22050)
+            sf.write(save_dir/f"sample{idx}_denoised.wav",den_wav [0],22050)
+            sf.write(save_dir/f"sample{idx}_clean.wav",   clean_wav[0],22050)
 
     n = len(loader)
     for k in sums: sums[k] /= n
@@ -127,7 +116,7 @@ def main(cfg):
     out_dir = Path(cfg.save_dir) if cfg.save_dir else None
     if out_dir: out_dir.mkdir(parents=True, exist_ok=True)
 
-    stft_cpu = build_stft()
+    stft_cpu = TacotronSTFT()   # 参数已改为 22k/80/256
     _,_,test_loader = create_dataloaders(
         cfg.root, dict(target_length=512, fn_STFT=stft_cpu),
         batch_size=1, subset_type=cfg.subset)
@@ -138,10 +127,10 @@ def main(cfg):
                                       map_location=DEVICE))
 
     sisdr = SISDR().to(DEVICE)
-    stoi  = STOI(16000, False).to(DEVICE)
+    stoi  = STOI(22050, False).to(DEVICE)
     pesq  = PESQ(16000, "wb").to(DEVICE)
 
-    res = evaluate(model, test_loader, stft_cpu,
+    res = evaluate(model, test_loader,
                    sisdr, stoi, pesq, out_dir)
 
     print(f"[TEST] SI-SDR={res['sisdr']:.2f} dB | STOI={res['stoi']:.3f} | "
