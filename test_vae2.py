@@ -56,9 +56,14 @@ def evaluate(model, loader,
     save_ids = set(random.sample(range(len(loader)), min(n_examples, len(loader))))
     pbar = tqdm(loader, desc="Testing")
 
-    for idx, (noisy_mel, clean_mel) in enumerate(pbar):
+    for idx, (noisy_mel, clean_mel, mask) in enumerate(pbar):
+        # mask: [1, T]
         noisy_mel, clean_mel = noisy_mel.to(DEVICE), clean_mel.to(DEVICE)
         den_mel, _ = model(noisy_mel, sample_posterior=False)
+        valid_T = int(mask[0].sum().item())
+        den_mel = den_mel[..., :valid_T]
+        clean_mel = clean_mel[..., :valid_T]
+        noisy_mel = noisy_mel[..., :valid_T]
 
         den_wav   = mel_to_waveform(den_mel, mel_extractor)/32768.0
         clean_wav = mel_to_waveform(clean_mel, mel_extractor)/32768.0

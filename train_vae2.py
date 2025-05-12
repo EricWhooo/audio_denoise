@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 # training/train_vae.py
 '''
-python train_vae.py \
+python train_vae2.py \
     --root /vast/lb4434/datasets/voicebank-demand \
-    --epochs 5 \
-    --batch_size 8 \
+    --epochs 1 \
+    --batch_size 16 \
     --lr 1e-4 \
-    --exp vae_denoise \
+    --exp vae_rundiff_t \
     --subset 28spk \
     --beta 1e-3 \
-    --save_dir ./samples/vae_denoise_samples \
+    --save_dir ./samples/vae_rundiff_t \
     --mel_stats mel_stats_28spk.pth
 '''
 from __future__ import annotations
@@ -70,14 +70,34 @@ class Logger:
 @torch.no_grad()
 def validate(model: AutoencoderKL, loader):
     model.eval()
-    recon_tot = kl_tot = 0.0
-    for noisy_mel, clean_mel in loader:
-        noisy_mel, clean_mel = noisy_mel.to(DEVICE), clean_mel.to(DEVICE)
-        rec_mel, posterior  = model(noisy_mel, sample_posterior=False)
-        recon_tot += F.l1_loss(rec_mel, clean_mel).item()
-        kl_tot    += torch.mean(posterior.kl()).item()
-    n = len(loader)
-    return recon_tot / n, kl_tot / n
+    recon_tot = 0.0
+    kl_tot = 0.0
+    n_frame_tot = 0  # 有效帧总数
+
+    for noisy_mel, clean_mel, mask in loader:
+        noisy_mel = noisy_mel.to(DEVICE)
+        clean_mel = clean_mel.to(DEVICE)
+        mask = mask.to(DEVICE)
+
+        rec_mel, posterior = model(noisy_mel, sample_posterior=False)
+        # pad+mask时，rec_mel, clean_mel, mask三者shape应一致
+        min_T = min(rec_mel.shape[-1], clean_mel.shape[-1], mask.shape[-1])
+        rec_mel = rec_mel[..., :min_T]
+        clean_mel = clean_mel[..., :min_T]
+        mask = mask[..., :min_T]
+        
+        # 按mask加权L1损失
+        loss_map = F.l1_loss(rec_mel, clean_mel, reduction='none')  # [B, n_mels, T]
+        valid_frame = mask.sum() * rec_mel.shape[1]  # 有效帧总数 * n_mels
+        loss_sum = (loss_map * mask[:, None, :]).sum()
+        recon_l1 = loss_sum / (valid_frame + 1e-8)
+        kl = torch.mean(posterior.kl())
+
+        recon_tot += recon_l1.item() * noisy_mel.size(0)  # 保持与原始平均一致：累加每个batch的平均loss*batch
+        kl_tot += kl.item() * noisy_mel.size(0)
+        n_frame_tot += noisy_mel.size(0)
+
+    return recon_tot / n_frame_tot, kl_tot / n_frame_tot
 
 def main(cfg: argparse.Namespace):
     run_dir = Path("runs")/cfg.exp
@@ -109,13 +129,20 @@ def main(cfg: argparse.Namespace):
     for epoch in range(1, cfg.epochs+1):
         model.train()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
-        for noisy_mel, clean_mel in pbar:
-            noisy_mel, clean_mel = noisy_mel.to(DEVICE), clean_mel.to(DEVICE)
+        for noisy_mel, clean_mel, mask in pbar:
+            noisy_mel, clean_mel, mask = noisy_mel.to(DEVICE), clean_mel.to(DEVICE), mask.to(DEVICE)
             rec_mel, posterior = model(noisy_mel)
-            recon_l1 = F.l1_loss(rec_mel, clean_mel)
-            kl       = torch.mean(posterior.kl())
-            beta     = beta_anneal(global_step, total_steps, cfg.beta)
-            loss     = recon_l1 + beta*kl
+            min_T = min(rec_mel.shape[-1], clean_mel.shape[-1], mask.shape[-1])
+            rec_mel = rec_mel[..., :min_T]
+            clean_mel = clean_mel[..., :min_T]
+            mask = mask[..., :min_T]
+            loss_raw = F.l1_loss(rec_mel, clean_mel, reduction='none')  # [B, n_mels, T]
+            loss_sum = (loss_raw * mask[:, None, :]).sum()
+            loss_den = mask.sum() * rec_mel.shape[1]
+            recon_l1 = loss_sum / (loss_den + 1e-8)
+            kl = torch.mean(posterior.kl())
+            beta = beta_anneal(global_step, total_steps, cfg.beta)
+            loss = recon_l1 + beta * kl
 
             optim.zero_grad()
             loss.backward()

@@ -1,6 +1,6 @@
 # scripts/calc_mel_stats.py
 import torch
-from training.dataset import create_dataloaders
+from training.dataset_new import create_dataloaders
 from audio.make_mel import MelExtractor
 SUBSET = '28spk'
 mel_extractor = MelExtractor(mean=None, std=None)

@@ -7,6 +7,28 @@ from torch.utils.data import Dataset, DataLoader, random_split
 import torchaudio
 
 from audio.make_mel import MelExtractor
+import torch.nn.functional as F
+
+def mel_collate_fn(batch):
+    """
+    batch: List of (noisy_mel, clean_mel), each [n_mels, T_i]
+    Outputs:
+        noisy_mel_padded: [B, n_mels, T_max]
+        clean_mel_padded: [B, n_mels, T_max]
+        mask: [B, T_max] (1=有效,0=pad)
+    """
+    noisy, clean = zip(*batch)
+    n_mels = noisy[0].shape[0]
+    lengths = [x.shape[1] for x in noisy]
+    T_max = max(lengths)
+    def pad_mel(mels):
+        return torch.stack([F.pad(m, (0, T_max - m.shape[1])) for m in mels])
+    noisy_padded = pad_mel(noisy)   # [B, n_mels, T_max]
+    clean_padded = pad_mel(clean)   # [B, n_mels, T_max]
+    mask = torch.zeros(len(batch), T_max, dtype=torch.float32)
+    for i, l in enumerate(lengths):
+        mask[i, :l] = 1.0
+    return noisy_padded, clean_padded, mask
 
 class VoiceBankDEMANDDataset(Dataset):
     def __init__(
@@ -65,7 +87,7 @@ class VoiceBankDEMANDDataset(Dataset):
     def _load_mel(self, path: str):
         wav = self._load_wav(path)
         mel = self.mel_extractor(wav)
-        return mel.unsqueeze(0)  # (1, n_mels, T)
+        return mel  # (1, n_mels, T)
 
     def __getitem__(self, idx: int):
         noisy_path, clean_path = self.pairs[idx]
@@ -76,7 +98,7 @@ class VoiceBankDEMANDDataset(Dataset):
     def __len__(self):
         return len(self.pairs)
 
-def _make_loader(dataset, batch_size, shuffle, num_workers, pin_memory):
+def _make_loader(dataset, batch_size, shuffle, num_workers, pin_memory, collate_fn=None):
     return DataLoader(
         dataset,
         batch_size=batch_size,
@@ -84,6 +106,7 @@ def _make_loader(dataset, batch_size, shuffle, num_workers, pin_memory):
         num_workers=num_workers,
         pin_memory=pin_memory,
         drop_last=True,
+        collate_fn=collate_fn
     )
 
 def create_dataloaders(
@@ -93,7 +116,7 @@ def create_dataloaders(
     val_ratio: float = 0.1,
     num_workers: int = 4,
     pin_memory: bool = True,
-    seed: int = 2023,
+    seed: int = 2025,
     subset_type: str = "56spk",
 ):
     full_train_set = VoiceBankDEMANDDataset(root_dir, "train", mel_extractor, subset_type)
@@ -124,11 +147,11 @@ def create_dataloaders(
 
     test_set = VoiceBankDEMANDDataset(root_dir, "test", mel_extractor)
 
-    train_loader = _make_loader(train_set, batch_size, True, num_workers, pin_memory)
+    train_loader = _make_loader(train_set, batch_size, True, num_workers, pin_memory, collate_fn=mel_collate_fn)
     val_loader = (
-        _make_loader(val_set, batch_size, False, num_workers, pin_memory)
+        _make_loader(val_set, batch_size, False, num_workers, pin_memory, collate_fn=mel_collate_fn)
         if val_set is not None
         else None
     )
-    test_loader = _make_loader(test_set, 1, False, num_workers, pin_memory)
+    test_loader = _make_loader(test_set, 1, False, num_workers, pin_memory, collate_fn=mel_collate_fn)
     return train_loader, val_loader, test_loader
