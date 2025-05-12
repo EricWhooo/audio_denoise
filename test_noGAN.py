@@ -3,9 +3,9 @@
 示例：
   python test_noGAN.py \
       --root /vast/lb4434/datasets/voicebank-demand \
-      --exp vae_run80mel_t \
-      --subset 28spk \
-      --save_dir ./samples/vae_run80me_t
+      --exp vae_run80mel_56_0.1 \
+      --subset 56spk \
+      --save_dir ./samples/vae_run80mel_56_0.1_2
 """
 
 from __future__ import annotations

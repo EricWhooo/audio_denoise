@@ -70,7 +70,7 @@ def wav_to_fbank(filename, target_length=1024, fn_STFT=None):
     assert fn_STFT is not None
 
     # mixup
-    segment_length = target_length * fn_STFT.hop_length      # = 256 * T
+    segment_length = target_length * fn_STFT.stft_fn.hop_length      # = 256 * T
     waveform = read_wav_file(filename, segment_length)
 
     waveform = waveform[0, ...]
