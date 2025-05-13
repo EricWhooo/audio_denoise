@@ -85,9 +85,9 @@ class VoiceBankDEMANDDataset(Dataset):
         return wav
 
     def _load_mel(self, path: str):
-        wav = self._load_wav(path)
-        mel = self.mel_extractor(wav)
-        return mel  # (1, n_mels, T)
+        wav = self._load_wav(path)               # 22 kHz
+        mel = self.mel_extractor(wav)            # (n_mels,T)
+        return mel
 
     def __getitem__(self, idx: int):
         noisy_path, clean_path = self.pairs[idx]

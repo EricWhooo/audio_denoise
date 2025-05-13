@@ -1,6 +1,7 @@
+# ========================= train_vae2.py =========================
 #!/usr/bin/env python3
-# training/train_vae2.py
-"""
+# 训练脚本（使用新的 MelExtractor，无均值/方差归一化）
+'''
 python train_vae2.py \
     --root /vast/lb4434/datasets/voicebank-demand \
     --epochs 1 \
@@ -9,10 +10,10 @@ python train_vae2.py \
     --exp vae_rundiff_t \
     --subset 28spk \
     --beta 1e-3 \
-    --save_dir ./samples/vae_rundiff_t --mel_stats mel_stats_28spk.pth
-"""
+    --save_dir ./samples/vae_rundiff_t
+'''
 from __future__ import annotations
-import argparse, os
+import argparse
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -26,17 +27,16 @@ from torchmetrics.audio import (
     PerceptualEvaluationSpeechQuality   as PESQ,
 )
 from tqdm import tqdm
-import soundfile as sf
 
 from audio.make_mel import MelExtractor
 from training.dataset_new import create_dataloaders
 from variational_autoencoder.autoencoder import AutoencoderKL
-from test_vae2 import evaluate        # 复用评测逻辑
+from test_vae2 import evaluate            # 直接复用上面的 evaluate
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"using device: {DEVICE}")
 
-# ---------- 模型配置 ----------
+# ---------------- 模型配置 ---------------- #
 def ddconfig() -> Dict:
     return dict(
         ch=128, out_ch=1, ch_mult=(1, 2, 4),
@@ -49,7 +49,7 @@ def ddconfig() -> Dict:
 def beta_anneal(step: int, total_steps: int, beta_max: float = 1e-3) -> float:
     return beta_max * min(1.0, step / (0.3 * total_steps))
 
-# ---------- 简易日志 ----------
+# ---------------- 简易日志 ---------------- #
 class Logger:
     def __init__(self, use_wandb: bool, exp_name: str, cfg: argparse.Namespace):
         self.use_wandb = use_wandb
@@ -67,7 +67,7 @@ class Logger:
             msg = " | ".join(f"{k}:{v:.4f}" for k, v in metrics.items())
             print(f"[{step if step is not None else 'log'}] {msg}")
 
-# ---------- 验证 ----------
+# ---------------- 验证 ---------------- #
 @torch.no_grad()
 def validate(model: AutoencoderKL, loader):
     model.eval()
@@ -81,15 +81,17 @@ def validate(model: AutoencoderKL, loader):
         rec_mel, posterior = model(noisy_mel)               # rec_mel:(B,1,80,T)
         rec_mel   = rec_mel.squeeze(1)                      # -> (B,80,T)
         min_T     = min(rec_mel.shape[-1], clean_mel.shape[-1], mask.shape[-1])
-        rec_mel   = rec_mel[..., :min_T]
-        clean_mel = clean_mel[..., :min_T]
-        mask      = mask[..., :min_T]
+        rec_mel, clean_mel, mask = (
+            rec_mel[..., :min_T],
+            clean_mel[..., :min_T],
+            mask[..., :min_T],
+        )
 
-        loss_map  = F.l1_loss(rec_mel, clean_mel, reduction="none")
-        loss_sum  = (loss_map * mask[:, None, :]).sum()
-        valid_cnt = mask.sum() * rec_mel.shape[1]           # n_valid*T
-        recon_l1  = loss_sum / (valid_cnt + 1e-8)
-        kl        = torch.mean(posterior.kl())
+        loss_map = F.l1_loss(rec_mel, clean_mel, reduction="none")
+        loss_sum = (loss_map * mask[:, None, :]).sum()
+        valid_cnt = mask.sum() * rec_mel.shape[1]
+        recon_l1 = loss_sum / (valid_cnt + 1e-8)
+        kl = torch.mean(posterior.kl())
 
         recon_tot += recon_l1.item() * noisy_mel.size(0)
         kl_tot    += kl.item()        * noisy_mel.size(0)
@@ -97,7 +99,7 @@ def validate(model: AutoencoderKL, loader):
 
     return recon_tot / n_sample, kl_tot / n_sample
 
-# ---------- 主程序 ----------
+# ---------------- 主程序 ---------------- #
 def main(cfg: argparse.Namespace):
     run_dir = Path("runs") / cfg.exp
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -106,9 +108,8 @@ def main(cfg: argparse.Namespace):
 
     logger = Logger(cfg.use_wandb, cfg.exp, cfg)
 
-    # MelExtractor
-    mel_stats = torch.load(cfg.mel_stats, map_location="cpu")
-    mel_extractor = MelExtractor(mean=mel_stats["mean"], std=mel_stats["std"])
+    # MelExtractor（不再需要均值/方差）
+    mel_extractor = MelExtractor()
 
     train_loader, val_loader, test_loader = create_dataloaders(
         cfg.root, mel_extractor, batch_size=cfg.batch_size, subset_type=cfg.subset
@@ -123,7 +124,7 @@ def main(cfg: argparse.Namespace):
     global_step = 0
     best_val, patience = float("inf"), 0
 
-    # ------------- 训练 -------------
+    # ---------------- 训练 ---------------- #
     for epoch in range(1, cfg.epochs + 1):
         model.train()
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}")
@@ -135,16 +136,18 @@ def main(cfg: argparse.Namespace):
             rec_mel, posterior = model(noisy_mel.unsqueeze(1))  # -> (B,1,80,T)
             rec_mel   = rec_mel.squeeze(1)                      # (B,80,T)
 
-            min_T     = min(rec_mel.shape[-1], clean_mel.shape[-1], mask.shape[-1])
-            rec_mel   = rec_mel  [..., :min_T]
-            clean_mel = clean_mel[..., :min_T]
-            mask      = mask     [..., :min_T]
+            min_T = min(rec_mel.shape[-1], clean_mel.shape[-1], mask.shape[-1])
+            rec_mel, clean_mel, mask = (
+                rec_mel[..., :min_T],
+                clean_mel[..., :min_T],
+                mask[..., :min_T],
+            )
 
-            loss_raw  = F.l1_loss(rec_mel, clean_mel, reduction="none")
-            loss_sum  = (loss_raw * mask[:, None, :]).sum()
-            loss_den  = mask.sum() * rec_mel.shape[1]
-            recon_l1  = loss_sum / (loss_den + 1e-8)
-            kl        = torch.mean(posterior.kl())
+            loss_raw = F.l1_loss(rec_mel, clean_mel, reduction="none")
+            loss_sum = (loss_raw * mask[:, None, :]).sum()
+            loss_den = mask.sum() * rec_mel.shape[1]
+            recon_l1 = loss_sum / (loss_den + 1e-8)
+            kl       = torch.mean(posterior.kl())
 
             beta = beta_anneal(global_step, total_steps, cfg.beta)
             loss = recon_l1 + beta * kl
@@ -179,7 +182,7 @@ def main(cfg: argparse.Namespace):
         if patience == 20:
             print("Early stop (no improve 20 epochs)"); break
 
-    # ------------- TEST -------------
+    # ---------------- TEST ---------------- #
     model.load_state_dict(torch.load(run_dir / "best.ckpt", map_location=DEVICE))
 
     sisdr_m = SISDR().to(DEVICE)
@@ -188,12 +191,12 @@ def main(cfg: argparse.Namespace):
 
     test_metrics = evaluate(model, test_loader,
                             sisdr_m, stoi_m, pesq_m,
-                            sample_dir, mel_extractor=mel_extractor)
+                            sample_dir)
 
     logger.log({f"test/{k}": v for k, v in test_metrics.items()})
     print("TEST metrics:", ", ".join(f"{k}:{v:.3f}" for k, v in test_metrics.items()))
 
-# ---------- CLI ----------
+# ---------------- CLI ---------------- #
 if __name__ == "__main__":
     pa = argparse.ArgumentParser()
     pa.add_argument("--root", required=True)
@@ -206,7 +209,5 @@ if __name__ == "__main__":
     pa.add_argument("--beta", type=float, default=1e-3)
     pa.add_argument("--use_wandb", action="store_true")
     pa.add_argument("--save_dir", type=str, default="")
-    pa.add_argument("--mel_stats", type=str, default="mel_stats.pth",
-                    help="路径: mel mean/std")
     cfg = pa.parse_args()
     main(cfg)
