@@ -3,9 +3,9 @@
 '''
 python test_vae2.py \
     --root /vast/lb4434/datasets/voicebank-demand \
-    --exp  vae_rundiff_t \
+    --exp  vae_rundiff_t2 \
     --subset 28spk \
-    --save_dir ./samples/vae_rundiff_t
+    --save_dir ./samples/vae_rundiff_t2
 '''
 from __future__ import annotations
 import argparse, random
@@ -36,7 +36,10 @@ from speechbrain.inference.vocoders import DiffWaveVocoder
 diffwave = DiffWaveVocoder.from_hparams(
     source="speechbrain/tts-diffwave-ljspeech",
     savedir="pretrained_models/tts-diffwave-ljspeech",
-).to(DEVICE)
+    run_opts={"device":"cuda"},
+)
+diffwave.to(DEVICE)
+#diffwave.model.to(DEVICE)  # ← 关键行！
 
 # ---------------- 工具 ---------------- #
 def resample_22k_to_16k(wav_tensor: torch.Tensor) -> torch.Tensor:
@@ -54,6 +57,7 @@ def mel_to_waveform(mel: torch.Tensor) -> np.ndarray:
     int16 numpy : (B,N)
     """
     # ---- 整形到 (B,1,80,T) ----
+    '''    
     if mel.dim() == 2:                      # (80,T)
         mel = mel.unsqueeze(0).unsqueeze(0)
     elif mel.dim() == 3:                    # (B,80,T)
@@ -61,7 +65,9 @@ def mel_to_waveform(mel: torch.Tensor) -> np.ndarray:
     elif mel.dim() == 4 and mel.shape[1] != 1:   # (B,C,80,T) → 取第一通道
         mel = mel[:, :1, ...]
     elif mel.dim() == 5:                    # (B,1,1,80,T)
-        mel = mel.squeeze(2)
+    '''
+    mel = mel.squeeze(1)
+    #print(mel.size())
     mel = mel.to(DEVICE)
 
     # ---- DiffWave 合成 ----
@@ -95,6 +101,8 @@ def evaluate(
         den_mel   = den_mel  [..., :valid_T ]
         clean_mel = clean_mel[..., :valid_T ]
         noisy_mel = noisy_mel[..., :valid_T ]
+
+        den_mel = den_mel.to(DEVICE)
 
         den_wav   = mel_to_waveform(den_mel)              / 32768.0
         clean_wav = mel_to_waveform(clean_mel.unsqueeze(1)) / 32768.0

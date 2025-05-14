@@ -7,10 +7,10 @@ python train_vae2.py \
     --epochs 1 \
     --batch_size 16 \
     --lr 1e-4 \
-    --exp vae_rundiff_t \
+    --exp vae_rundiff_t2 \
     --subset 28spk \
     --beta 1e-3 \
-    --save_dir ./samples/vae_rundiff_t
+    --save_dir ./samples/vae_rundiff_t2
 '''
 from __future__ import annotations
 import argparse
@@ -180,7 +180,7 @@ def main(cfg: argparse.Namespace):
         else:
             patience += 1
         if patience == 20:
-            print("Early stop (no improve 20 epochs)"); break
+            print("Early stopping! (no improve 20 epochs)"); break
 
     # ---------------- TEST ---------------- #
     model.load_state_dict(torch.load(run_dir / "best.ckpt", map_location=DEVICE))
